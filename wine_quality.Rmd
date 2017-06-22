@@ -1,0 +1,88 @@
+---
+title: "Caret Machine Learning Play"
+output: html_notebook
+---
+
+Play with machine learning in R via Caret
+
+Load Wine Quality data
+
+```{r}
+white <- read.csv('~/Desktop/wine_quality/winequality-white.csv', sep=";")
+print(str(white))
+```
+
+```{r}
+library(ggplot2)
+
+white$q <- as.factor(white$quality)
+
+ggplot(data=white, aes(x=q)) +
+  geom_bar() +
+  labs(x = "Wine Quality")
+```
+
+
+Load Caret package and partition data into Test and Train
+
+```{r}
+library(caret)
+set.seed(507483)
+
+trainIndex <- createDataPartition(white$quality, p = .6, times = 1, list = F)
+
+
+
+#Create a binary target to test classification methods
+
+white$class <- as.factor(ifelse(white$quality > 7, 'good', 'bad'))
+
+wTrain <- white[trainIndex, !(names(white) %in% c('quality','q'))]
+wTest <- white[-trainIndex, !(names(white) %in% c('quality','q'))]
+
+str(wTrain)
+```
+
+
+Fit a simple GBM model with cgboost
+```{r}
+
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           summaryFunction = twoClassSummary,
+                           classProbs = T,
+                           allowParallel = T)
+
+grid <- expand.grid(nrounds = 500,
+                    eta = c(.01,.1),
+                    max_depth = c(2,4))
+  
+gbmFit1 <- train(class ~ .,
+                 data = wTrain,
+                 method = 'xgbTree',
+                 metric = 'ROC',
+                 trControl = fitControl,
+                 tuneGrid = grid)
+
+gbmFit1
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
