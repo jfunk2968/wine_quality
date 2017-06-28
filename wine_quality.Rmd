@@ -1,9 +1,9 @@
 ---
-title: "Caret Machine Learning Play"
+title: "Wine Quality"
 output: html_notebook
 ---
 
-Play with machine learning in R via Caret
+## Machine learning with Caret
 
 Load Wine Quality data
 
@@ -30,11 +30,6 @@ library(caret)
 set.seed(507483)
 
 trainIndex <- createDataPartition(white$quality, p = .6, times = 1, list = F)
-
-
-
-#Create a binary target to test classification methods
-
 white$class <- as.factor(ifelse(white$quality > 7, 'good', 'bad'))
 
 wTrain <- white[trainIndex, !(names(white) %in% c('quality','q'))]
@@ -43,39 +38,94 @@ wTest <- white[-trainIndex, !(names(white) %in% c('quality','q'))]
 str(wTrain)
 ```
 
+Set up backend to run xgboost in paralell
+```{r}
+library(doParallel)
+registerDoParallel(6)
+getDoParWorkers()
+```
+
 
 Fit a simple GBM model with cgboost
 ```{r}
-
 fitControl <- trainControl(method = "repeatedcv",
                            number = 5,
+                           repeats = 5,
                            summaryFunction = twoClassSummary,
                            classProbs = T,
                            allowParallel = T)
 
-grid <- expand.grid(nrounds = 500,
-                    eta = c(.01,.1),
-                    max_depth = c(2,4))
+grid <- expand.grid(nrounds = c(100, 300),
+                    eta = c(.01, .1),
+                    max_depth = c(3, 5),
+                    gamma=c(0), 
+                    colsample_bytree=c(1), 
+                    min_child_weight=c(1), 
+                    subsample=c(.5, .75))
   
 gbmFit1 <- train(class ~ .,
                  data = wTrain,
                  method = 'xgbTree',
                  metric = 'ROC',
                  trControl = fitControl,
-                 tuneGrid = grid)
+                 tuneGrid = grid,
+                 verbose = 1)
 
 gbmFit1
 ```
 
 
+It appears that a lower with additional trees still has opportunity to impove ...
+```{r}
+plot(gbmFit1)
+```
+
+
+```{r}
+grid2 <- expand.grid(nrounds = c(700, 1000, 1500),
+                    eta = c(.0001, .001, .005),
+                    max_depth = c(3, 4, 5))
+  
+gbmFit2 <- train(class ~ .,
+                 data = wTrain,
+                 method = 'xgbTree',
+                 metric = 'ROC',
+                 trControl = fitControl,
+                 tuneGrid = grid2,
+                 verbose = 1)
+
+gbmFit2
+
+plot(gbmFit2)
+```
+
+```{r}
+plot(gbmFit2)
+```
 
 
 
+```{r}
+fitControlR <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 5,
+                           summaryFunction = twoClassSummary,
+                           classProbs = T,
+                           allowParallel = T,
+                           search = "random")
+  
+gbmFitR <- train(class ~ .,
+                 data = wTrain,
+                 method = 'xgbTree',
+                 metric = 'ROC',
+                 trControl = fitControlR,
+                 tuneLength = 30,
+                 verbose = 1)
 
+gbmFitR
 
-
-
-
+plot(gbmFitR)
+```
 
 
 
