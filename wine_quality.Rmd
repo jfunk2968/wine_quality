@@ -38,24 +38,25 @@ wTest <- white[-trainIndex, !(names(white) %in% c('quality','q'))]
 str(wTrain)
 ```
 
-Set up backend to run xgboost in paralell
-```{r}
-library(doParallel)
-registerDoParallel(6)
-getDoParWorkers()
-```
+<!-- Set up backend to run in paralell - DONT USE WITH XGBOOST -->
+<!-- ```{r} -->
+<!-- library(doParallel) -->
+<!-- registerDoParallel(4) -->
+<!-- getDoParWorkers() -->
+
+<!-- registerDoSEQ() -->
+<!-- ``` -->
 
 
-Fit a simple GBM model with cgboost
+Fit an xgboost model with grid parameter search
 ```{r}
 fitControl <- trainControl(method = "repeatedcv",
                            number = 5,
                            repeats = 5,
                            summaryFunction = twoClassSummary,
-                           classProbs = T,
-                           allowParallel = T)
+                           classProbs = T)
 
-grid <- expand.grid(nrounds = c(100, 300),
+grid <- expand.grid(nrounds = c(100, 200),
                     eta = c(.01, .1),
                     max_depth = c(3, 5),
                     gamma=c(0), 
@@ -69,7 +70,9 @@ gbmFit1 <- train(class ~ .,
                  metric = 'ROC',
                  trControl = fitControl,
                  tuneGrid = grid,
-                 verbose = 1)
+                 verbose = 1,
+                 allowParallel = F,
+                 nthread = 4)
 
 gbmFit1
 ```
@@ -81,37 +84,13 @@ plot(gbmFit1)
 ```
 
 
-```{r}
-grid2 <- expand.grid(nrounds = c(700, 1000, 1500),
-                    eta = c(.0001, .001, .005),
-                    max_depth = c(3, 4, 5))
-  
-gbmFit2 <- train(class ~ .,
-                 data = wTrain,
-                 method = 'xgbTree',
-                 metric = 'ROC',
-                 trControl = fitControl,
-                 tuneGrid = grid2,
-                 verbose = 1)
-
-gbmFit2
-
-plot(gbmFit2)
-```
-
-```{r}
-plot(gbmFit2)
-```
-
-
-
+Run a random parameter search
 ```{r}
 fitControlR <- trainControl(method = "repeatedcv",
                            number = 5,
                            repeats = 5,
                            summaryFunction = twoClassSummary,
                            classProbs = T,
-                           allowParallel = T,
                            search = "random")
   
 gbmFitR <- train(class ~ .,
@@ -120,7 +99,9 @@ gbmFitR <- train(class ~ .,
                  metric = 'ROC',
                  trControl = fitControlR,
                  tuneLength = 30,
-                 verbose = 1)
+                 verbose = 1,
+                 allowParallel = F,
+                 nthread = 4)
 
 gbmFitR
 
@@ -129,7 +110,77 @@ plot(gbmFitR)
 
 
 
+Use bayesian optimization to tune parameters, with random search as starting point
+```{r}
+ctrl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 5,
+                           summaryFunction = twoClassSummary,
+                           classProbs = T )
 
+xgb_fit_bayes <- function(nroundsIn, etaIn, max_depthIn, gammaIn, colsample_bytreeIn, min_child_weightIn, subsampleIn) {
+  txt <- capture.output(
+    mod <- train(class ~ .,
+                 data = wTrain,
+                 method = 'xgbTree',
+                 metric = 'ROC',
+                 trControl = ctrl,
+                 tuneGrid = data.frame(nrounds = nroundsIn, 
+                                       eta = etaIn, 
+                                       max_depth = max_depthIn, 
+                                       gamma = gammaIn, 
+                                       colsample_bytree = colsample_bytreeIn, 
+                                       min_child_weight = min_child_weightIn, 
+                                       subsample = subsampleIn)))
+
+  list(Score = getTrainPerf(mod)[, "TrainMOC"], Pred = 0)
+}
+
+## Define the bounds of the search. 
+lower_bounds <- c(nroundsIn = 50, 
+                  etaIn = .0001, 
+                  max_depthIn = 1, 
+                  gammaIn = 0,
+                  colsample_bytreeIn = 1, 
+                  min_child_weightIn = 1,
+                  subsampleIn = .5)
+
+upper_bounds <- c(nroundsIn = 1000, 
+                  etaIn = .2, 
+                  max_depthIn = 5, 
+                  gammaIn = 0,
+                  colsample_bytreeIn = 1, 
+                  min_child_weightIn = 1,
+                  subsampleIn = .9)
+
+bounds <- list(logC = c(lower_bounds[1], upper_bounds[1]),
+              logSigma = c(lower_bounds[2], upper_bounds[2]))
+
+
+## Create a grid of values as the input into the BO code
+initial_grid <- rand_search$results[, c("C", "sigma", "RMSE")]
+initial_grid$C <- log(initial_grid$C)
+initial_grid$sigma <- log(initial_grid$sigma)
+initial_grid$RMSE <- -initial_grid$RMSE
+names(initial_grid) <- c("logC", "logSigma", "Value")
+
+## Run the optimization with the initial grid and do
+## 30 iterations. We will choose new parameter values
+## using the upper confidence bound using 1 std. dev. 
+library(rBayesianOptimization)
+ 
+set.seed(8606)
+ba_search <- BayesianOptimization(xgb_fit_bayes,
+                                 bounds = bounds,
+                                 init_grid_dt = initial_grid, 
+                                 init_points = 0, 
+                                 n_iter = 30,
+                                 acq = "ucb", 
+                                 kappa = 1, 
+                                 eps = 0.0,
+                                 verbose = TRUE)
+
+```
 
 
 
