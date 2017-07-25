@@ -12,6 +12,7 @@ ggplot(data=white, aes(x=q)) +
 
 
 # Load Caret package and partition data into Test and Train
+
 library(caret)
 set.seed(507483)
 
@@ -23,9 +24,11 @@ wTest <- white[-trainIndex, !(names(white) %in% c('quality','q'))]
 
 str(wTrain)
 
+wFull <- white[, !(names(white) %in% c('quality','q'))]
 
 
 # Fit an xgboost model - fix learning rate at .1 and find optimum number of trees
+
 library(xgboost)
 library(dplyr)
 
@@ -41,7 +44,8 @@ params = list(eta = .1,
               min_child_weight = 1, 
               subsample = .5,
               objective = 'binary:logistic',
-              eval_metric = 'auc')
+              eval_metric = 'auc',
+              nthread = 4)
 
 xgb <- xgb.train(params = params,
                  data = dtrain,
@@ -55,69 +59,77 @@ xgb <- xgb.train(params = params,
 #     [122]	val1-auc:0.854336
 
 
-# Fit an xgboost model
+# Fit an axboost model with CV.  Data is a little thin to split many times ...
+xgb2 <- xgb.cv(params = params,
+                 data = dtrain,
+                 nrounds = 1000,
+                 print_every_n = 10L,
+                 early_stopping_rounds = 50,
+                 maximize = TRUE,
+                 nfold = 5,
+                 stratified = TRUE)
 
-fitControl <- trainControl(method = "repeatedcv",
-                           number = 5,
-                           repeats = 5,
+
+
+# Use caret to fit an xgboost model, using predefined train and test data
+fitControl <- trainControl(index =  replicate(122, trainIndex, FALSE),
                            summaryFunction = twoClassSummary,
                            classProbs = T)
 
-
-grid <- expand.grid(nrounds = 122,
+grid <- expand.grid(nrounds = seq(100,200,10),
                     eta = .1,
                     max_depth = 5,
                     gamma = 0, 
                     colsample_bytree = .8, 
                     min_child_weight = 1, 
                     subsample = .8)
-
 
 gbm_init <- train(class ~ .,
-                 data = wTrain,
-                 method = 'xgbTree',
-                 metric = 'ROC',
-                 trControl = fitControl,
-                 tuneGrid = grid,
-                 #early_stopping_rounds = 10,
-                 verbose = 1)
+                  nthread = 4,
+                  data = wFull,
+                  method = 'xgbTree',
+                  metric = 'ROC',
+                  trControl = fitControl,
+                  tuneGrid = grid,
+                  verbose = 1)
+
+gbm_init
 
 
 
+# CV to select depth, subsample, and min child weight
+fitControl2 <- trainControl(method = "repeatedcv",
+                           number = 3,
+                           repeats = 3,
+                           summaryFunction = twoClassSummary,
+                           classProbs = T)
 
-
-
-grid <- expand.grid(nrounds = c(100, 200),
+grid2 <- expand.grid(nrounds = 122,
                     eta = .1,
-                    max_depth = 5,
+                    max_depth = c(2,3,4,5,6),
                     gamma = 0, 
                     colsample_bytree = .8, 
-                    min_child_weight = 1, 
-                    subsample = .8)
+                    min_child_weight = c(1,3,5,10), 
+                    subsample = c(.3,.5,.8))
 
-gbmFit1 <- train(class ~ .,
+gbm_2 <- train(class ~ .,
                  data = wTrain,
                  method = 'xgbTree',
                  metric = 'ROC',
-                 trControl = fitControl,
-                 tuneGrid = grid,
-                 verbose = 1,
-                 allowParallel = F,
-                 nthread = 4)
+                 trControl = fitControl2,
+                 tuneGrid = grid2,
+                 verbose = 1)
 
-gbmFit1
+gbm_2
+plot(gbm_2)
 
-
-# It appears that a lower with additional trees still has opportunity to impove ...
-plot(gbmFit1)
 
 
 
 # Run a random parameter search
-
 fitControlR <- trainControl(method = "repeatedcv",
-                            number = 5,
-                            repeats = 5,
+                            number = 3,
+                            repeats = 3,
                             summaryFunction = twoClassSummary,
                             classProbs = T,
                             search = "random")
@@ -127,13 +139,33 @@ gbmFitR <- train(class ~ .,
                  method = 'xgbTree',
                  metric = 'ROC',
                  trControl = fitControlR,
-                 tuneLength = 10,
+                 tuneLength = 30,
                  verbose = 1,
-                 allowParallel = F,
                  nthread = 4)
 
 gbmFitR
 
+
+# Use adaptive resampling
+adaptControl <- trainControl(method = "adaptive_cv",
+                             number = 3,
+                             repeats = 3,
+                             adaptive = list(min = 5, 
+                                             alpha = 0.05, 
+                                             method = "gls", 
+                                             complete = TRUE),
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary,
+                             search = "random")
+
+gbmAdapt <- train(class ~ .,
+                  data = wTrain,
+                  method = 'xgbTree',
+                  metric = 'ROC',
+                  trControl = adaptControl,
+                  tuneLength = 30,
+                  verbose = 1,
+                  nthread = 4)
 
 
 # Use bayesian optimization to tune parameters, with random search as starting point
