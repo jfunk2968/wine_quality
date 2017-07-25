@@ -12,7 +12,6 @@ ggplot(data=white, aes(x=q)) +
 
 
 # Load Caret package and partition data into Test and Train
-
 library(caret)
 set.seed(507483)
 
@@ -24,8 +23,39 @@ wTest <- white[-trainIndex, !(names(white) %in% c('quality','q'))]
 
 str(wTrain)
 
-  
-# Fit an xgboost model with grid parameter search
+
+
+# Fit an xgboost model - fix learning rate at .1 and find optimum number of trees
+library(xgboost)
+library(dplyr)
+
+dtrain <- xgb.DMatrix(data=as.matrix(select(wTrain, -class)), 
+                      label=sapply(wTrain$class, function(x) ifelse(x=='good', 1, 0)))
+dvalidation <- xgb.DMatrix(data=as.matrix(select(wTest, -class)), 
+                      label=sapply(wTest$class, function(x) ifelse(x=='good', 1, 0) ))
+
+params = list(eta = .1,
+              max_depth = 5,
+              gamma = 0, 
+              colsample_bytree = .8, 
+              min_child_weight = 1, 
+              subsample = .5,
+              objective = 'binary:logistic',
+              eval_metric = 'auc')
+
+xgb <- xgb.train(params = params,
+                 data = dtrain,
+                 nrounds = 1000,
+                 print_every_n = 10L,
+                 early_stopping_rounds = 50,
+                 maximize = TRUE,
+                 watchlist = list(val1 = dvalidation))
+
+#     Stopping. Best iteration:
+#     [122]	val1-auc:0.854336
+
+
+# Fit an xgboost model
 
 fitControl <- trainControl(method = "repeatedcv",
                            number = 5,
@@ -33,13 +63,37 @@ fitControl <- trainControl(method = "repeatedcv",
                            summaryFunction = twoClassSummary,
                            classProbs = T)
 
+
+grid <- expand.grid(nrounds = 122,
+                    eta = .1,
+                    max_depth = 5,
+                    gamma = 0, 
+                    colsample_bytree = .8, 
+                    min_child_weight = 1, 
+                    subsample = .8)
+
+
+gbm_init <- train(class ~ .,
+                 data = wTrain,
+                 method = 'xgbTree',
+                 metric = 'ROC',
+                 trControl = fitControl,
+                 tuneGrid = grid,
+                 #early_stopping_rounds = 10,
+                 verbose = 1)
+
+
+
+
+
+
 grid <- expand.grid(nrounds = c(100, 200),
-                    eta = c(.01, .1),
-                    max_depth = c(3, 5),
-                    gamma=c(0), 
-                    colsample_bytree=c(1), 
-                    min_child_weight=c(1), 
-                    subsample=c(.5, .75))
+                    eta = .1,
+                    max_depth = 5,
+                    gamma = 0, 
+                    colsample_bytree = .8, 
+                    min_child_weight = 1, 
+                    subsample = .8)
 
 gbmFit1 <- train(class ~ .,
                  data = wTrain,
@@ -152,3 +206,17 @@ ba_search <- BayesianOptimization(xgb_fit_bayes,
                                   verbose = TRUE)
 
 
+new_grid <- ba_search$History[,-c('Round')]
+new_grid
+
+
+
+ba_search2 <- BayesianOptimization(xgb_fit_bayes,
+                                  bounds = bounds,
+                                  init_grid_dt = new_grid, 
+                                  init_points = 0, 
+                                  n_iter = 10,
+                                  acq = "ucb", 
+                                  kappa = 1, 
+                                  eps = 0.0,
+                                  verbose = TRUE)
