@@ -49,7 +49,7 @@ params = list(eta = .1,
 
 xgb <- xgb.train(params = params,
                  data = dtrain,
-                 nrounds = 1000,
+                 nrounds = 100,
                  print_every_n = 10L,
                  early_stopping_rounds = 50,
                  maximize = TRUE,
@@ -57,6 +57,24 @@ xgb <- xgb.train(params = params,
 
 #     Stopping. Best iteration:
 #     [122]	val1-auc:0.854336
+
+
+# partial dependence plots
+imps <- xgb.importance(feature_names=names(select(wTrain, -class)), model=xgb)
+imps
+
+library(pdp)
+
+pdp1 <- partial(xgb, 
+                pred.var = "density", 
+                plot = TRUE, 
+                #grid.resolution = 30,
+                quantiles = TRUE,
+                smooth = TRUE,
+                train = select(wTrain, -class))
+
+autoplot(pdp1)
+
 
 
 # Fit an axboost model with CV.  Data is a little thin to split many times ...
@@ -167,12 +185,13 @@ gbmAdapt <- train(class ~ .,
                   verbose = 1,
                   nthread = 4)
 
+gbmAdapt
+
 
 # Use bayesian optimization to tune parameters, with random search as starting point
-
-ctrl <- trainControl(method = "repeatedcv",
-                     number = 5,
-                     repeats = 5,
+bayesControl <- trainControl(method = "repeatedcv",
+                     number = 3,
+                     repeats = 3,
                      summaryFunction = twoClassSummary,
                      classProbs = T )
 
@@ -182,7 +201,7 @@ xgb_fit_bayes <- function(nroundsIn, etaIn, max_depthIn, gammaIn, colsample_bytr
                  data = wTrain,
                  method = 'xgbTree',
                  metric = 'ROC',
-                 trControl = ctrl,
+                 trControl = bayesControl,
                  tuneGrid = data.frame(nrounds = nroundsIn, 
                                        eta = etaIn, 
                                        max_depth = max_depthIn, 
@@ -211,6 +230,7 @@ initial_grid <- gbmFitR$results[, c("nrounds",
                                     "min_child_weight", 
                                     "subsample", 
                                     "ROC")]
+
 names(initial_grid) <- c("nroundsIn", 
                          "etaIn", 
                          "max_depthIn", 
