@@ -67,14 +67,27 @@ library(pdp)
 
 pdp1 <- partial(xgb, 
                 pred.var = "density", 
-                plot = TRUE, 
+                #plot = TRUE, 
                 #grid.resolution = 30,
-                quantiles = TRUE,
-                smooth = TRUE,
+                #quantiles = TRUE,
+                #smooth = TRUE,
                 train = select(wTrain, -class))
+head(pdp1)
 
-autoplot(pdp1)
+library(ggplot2)
+ggplot(pdp1, aes(x=density, y=yhat)) + geom_line()
 
+
+# fit spline to pdp plot
+library(splines)
+
+
+bs <- bs(x = pdp1$density, df = 5)
+sp1 <- lm(yhat ~ bs(density, df = 5), data=pdp1)
+pdp1$sp1 <- predict(sp1, pdp1)
+ggplot(pdp1, aes(x=density)) + 
+  geom_line(aes(y=yhat), color='red') +
+  geom_line(aes(y=sp1), color='blue')
 
 
 # Fit an axboost model with CV.  Data is a little thin to split many times ...
