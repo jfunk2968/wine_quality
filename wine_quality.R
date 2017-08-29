@@ -64,6 +64,9 @@ imps <- xgb.importance(feature_names=names(select(wTrain, -class)), model=xgb)
 imps
 
 library(pdp)
+library(ggplot2)
+library(gridExtra)
+require(cowplot)
 
 pdp1 <- partial(xgb, 
                 pred.var = "density", 
@@ -71,11 +74,26 @@ pdp1 <- partial(xgb,
                 #grid.resolution = 30,
                 #quantiles = TRUE,
                 #smooth = TRUE,
-                train = select(wTrain, -class))
-head(pdp1)
+                train = select(wTrain, -class),
+                rug = TRUE)
+#head(pdp1)
 
-library(ggplot2)
-ggplot(pdp1, aes(x=density, y=yhat)) + geom_line()
+lmin = min(wTrain$density)
+lmax = max(wTrain$density)
+
+hist_rug <- ggplot(wTrain, aes(x=density)) +
+  geom_histogram() +
+  xlim(lmin, lmax) +
+  theme_void() +
+  theme(axis.line = element_line(colour = "black"))
+
+pdp_plot <- ggplot(pdp1, aes(x=density, y=yhat)) + 
+  geom_line() +
+  xlim(lmin, lmax)
+
+plot_grid(pdp_plot, hist_rug, rel_heights=c(0.9, 0.1), ncol=1, align='v')
+
+
 
 
 # fit spline to pdp plot
