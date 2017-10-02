@@ -68,32 +68,6 @@ library(pdp)
 library(gridExtra)
 require(cowplot)
 
-pdp1 <- partial(xgb_m1, 
-                pred.var = "density", 
-                #plot = TRUE, 
-                #grid.resolution = 30,
-                #quantiles = TRUE,
-                #smooth = TRUE,
-                train = test,
-                rug = TRUE)
-#head(pdp1)
-
-lmin = min(wTrain$density)
-lmax = max(wTrain$density)
-
-hist_rug <- ggplot(wTrain, aes(x=density)) +
-  geom_histogram(bins=30) +
-  xlim(lmin, lmax) +
-  theme_void() +
-  theme(axis.line = element_line(colour = "black"))
-
-pdp_plot <- ggplot(pdp1, aes(x=density, y=yhat)) + 
-  geom_line() +
-  xlim(lmin, lmax)
-
-plot_grid(pdp_plot, hist_rug, rel_heights=c(0.9, 0.1), ncol=1, align='v')
-
-
 pretty_pdp <- function(model, var, df)  {
   pdp1 <- partial(model, 
                   pred.var = var, 
@@ -124,19 +98,42 @@ pretty_pdp <- function(model, var, df)  {
                    align='v'))
 }
 
-p <- pretty_pdp(xgb_m1, 'density', select(wTrain, -class))
+pdp1 <- pretty_pdp(xgb_m1, 'density', select(wTrain, -class))
 
 
-# fit spline to pdp plot
+# Fit cubic b-spline to pdp plot
+
 library(splines)
 
+pdp2 <- partial(xgb_m1, 
+                pred.var = 'density', 
+                train = select(wTrain, -class))
 
-bs <- bs(x = pdp1$density, df = 5)
-sp1 <- lm(yhat ~ bs(density, df = 5), data=pdp1)
-pdp1$sp1 <- predict(sp1, pdp1)
-ggplot(pdp1, aes(x=density)) + 
+bs <- bs(x = pdp2$density, df = 5)
+
+sp1 <- lm(yhat ~ bs(density, df = 5), data=pdp2)
+
+pdp2$sp1 <- predict(sp1, pdp2)
+
+ggplot(pdp2, aes(x=density)) + 
   geom_line(aes(y=yhat), color='red') +
   geom_line(aes(y=sp1), color='blue')
+
+
+# Fit a MARS spline to pdp plot
+
+library(earth)
+
+earth1 <- earth(yhat ~ density, data=pdp2, nk=5)
+
+pdp2$mars <- earth1$fitted.values
+
+ggplot(pdp2, aes(x=density)) + 
+  geom_line(aes(y=yhat), color='red') +
+  geom_line(aes(y=sp1), color='blue') +
+  geom_line(aes(y=mars), color='green')
+
+
 
 
 # Fit an axboost model with CV.  Data is a little thin to split many times ...
