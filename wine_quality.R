@@ -1,17 +1,17 @@
 
+# Load wine quality data
+
 white <- read.csv('~/Desktop/wine_quality/winequality-white.csv', sep=";")
 print(str(white))
-
-library(ggplot2)
-
 white$q <- as.factor(white$quality)
 
+library(ggplot2)
 ggplot(data=white, aes(x=q)) +
   geom_bar() +
   labs(x = "Wine Quality")
 
 
-# Load Caret package and partition data into Test and Train
+# Partition data into Test and Train
 
 library(caret)
 set.seed(507483)
@@ -47,34 +47,34 @@ params = list(eta = .1,
               eval_metric = 'auc',
               nthread = 4)
 
-xgb <- xgb.train(params = params,
+xgb_m1 <- xgb.train(params = params,
                  data = dtrain,
-                 nrounds = 100,
+                 nrounds = 1000,
                  print_every_n = 10L,
                  early_stopping_rounds = 50,
                  maximize = TRUE,
                  watchlist = list(val1 = dvalidation))
 
-#     Stopping. Best iteration:
-#     [122]	val1-auc:0.854336
+#   Stopping. Best iteration:
+#   [81]	val1-auc:0.870192
 
 
-# partial dependence plots
-imps <- xgb.importance(feature_names=names(select(wTrain, -class)), model=xgb)
+# Review partial dependence plots for top variables
+
+imps <- xgb.importance(feature_names=names(select(wTrain, -class)), model=xgb_m1)
 imps
 
 library(pdp)
-library(ggplot2)
 library(gridExtra)
 require(cowplot)
 
-pdp1 <- partial(xgb, 
+pdp1 <- partial(xgb_m1, 
                 pred.var = "density", 
                 #plot = TRUE, 
                 #grid.resolution = 30,
                 #quantiles = TRUE,
                 #smooth = TRUE,
-                train = select(wTrain, -class),
+                train = test,
                 rug = TRUE)
 #head(pdp1)
 
@@ -82,7 +82,7 @@ lmin = min(wTrain$density)
 lmax = max(wTrain$density)
 
 hist_rug <- ggplot(wTrain, aes(x=density)) +
-  geom_histogram() +
+  geom_histogram(bins=30) +
   xlim(lmin, lmax) +
   theme_void() +
   theme(axis.line = element_line(colour = "black"))
@@ -94,6 +94,37 @@ pdp_plot <- ggplot(pdp1, aes(x=density, y=yhat)) +
 plot_grid(pdp_plot, hist_rug, rel_heights=c(0.9, 0.1), ncol=1, align='v')
 
 
+pretty_pdp <- function(model, var, df)  {
+  pdp1 <- partial(model, 
+                  pred.var = var, 
+                  #plot = TRUE, 
+                  #grid.resolution = 30,
+                  #quantiles = TRUE,
+                  #smooth = TRUE,
+                  train = df,
+                  rug = TRUE)
+  
+  lmin = min(df[,var])
+  lmax = max(df[,var])
+  
+  hist_rug <- ggplot(df, aes_string(x=var)) +
+    geom_histogram(bins=30) +
+    xlim(lmin, lmax) +
+    theme_void() +
+    theme(axis.line = element_line(colour = "black"))
+  
+  pdp_plot <- ggplot(pdp1, aes_string(x=var, y='yhat')) + 
+    geom_line() +
+    xlim(lmin, lmax)
+  
+  return(plot_grid(pdp_plot, 
+                   hist_rug, 
+                   rel_heights=c(0.9, 0.1), 
+                   ncol=1, 
+                   align='v'))
+}
+
+p <- pretty_pdp(xgb_m1, 'density', select(wTrain, -class))
 
 
 # fit spline to pdp plot
