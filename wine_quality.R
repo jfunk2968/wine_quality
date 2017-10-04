@@ -73,7 +73,7 @@ pretty_pdp <- function(model, var, df)  {
                   pred.var = var, 
                   #plot = TRUE, 
                   #grid.resolution = 30,
-                  #quantiles = TRUE,
+                  quantiles = TRUE,
                   #smooth = TRUE,
                   train = df,
                   rug = TRUE)
@@ -107,6 +107,8 @@ library(splines)
 
 pdp2 <- partial(xgb_m1, 
                 pred.var = 'density', 
+                #quantiles = TRUE,
+                grid.resolution = 50,
                 train = select(wTrain, -class))
 
 bs <- bs(x = pdp2$density, df = 5)
@@ -134,9 +136,44 @@ ggplot(pdp2, aes(x=density)) +
   geom_line(aes(y=mars), color='green')
 
 
+# Fit a penalized spline to pdp plot
+
+library(gam)
+library(mgcv)
+
+xknots = list(quantile(pdp2$density, seq(.05, .95, .05)))
+
+pen_spline <- gam(pdp2$yhat ~ s(pdp2$density, bs="cr", k=19), 
+                  knots=xknots)
 
 
-# Fit an axboost model with CV.  Data is a little thin to split many times ...
+# Plot all PDP parts together
+
+lmin = min(wTrain$density)
+lmax = max(wTrain$density)
+
+hist_rug <- ggplot(wTrain, aes(x=density)) +
+  geom_histogram(bins=30) +
+  xlim(lmin, lmax) +
+  theme_void() +
+  theme(axis.line = element_line(colour = "black"))
+
+pdp_plot <- ggplot(pdp2, aes(x=density)) + 
+  geom_line(aes(y=yhat), color='red') +
+  geom_line(aes(y=sp1), color='blue') +
+  geom_line(aes(y=mars), color='green') +
+  xlim(lmin, lmax)
+
+plot_grid(pdp_plot, 
+           hist_rug, 
+           rel_heights=c(0.9, 0.1), 
+           ncol=1, 
+           align='v')
+
+
+
+
+# Fit an xgboost model with CV.  Data is a little thin to split many times ...
 xgb2 <- xgb.cv(params = params,
                  data = dtrain,
                  nrounds = 1000,
