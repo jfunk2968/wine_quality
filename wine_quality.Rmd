@@ -1,0 +1,92 @@
+---
+title: "xgboost Parameter Tuning"
+output: html_notebook
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## A brief comparison of xgboost parameter tuning methods using the Wine Quality data set
+
+```{r}
+# load wine quality data
+white <- read.csv('~/Desktop/wine_quality/winequality-white.csv', sep=";")
+print(str(white))
+
+# plot the target (quality) distribution
+library(ggplot2)
+white$q <- as.factor(white$quality)
+white$class <- as.factor(ifelse(white$quality > 7, 'good', 'bad'))
+ggplot(data=white, aes(x=q)) +
+  geom_bar() +
+  labs(x = "Wine Quality")
+```
+
+```{r}
+# partition data into Train, Validation, and Test splits
+library(caret)
+set.seed(507483)
+
+trainIndex <- createFolds(white$quality, k=3, list=F)
+
+wTrain <- white[trainIndex==1, !(names(white) %in% c('quality','q'))]
+wVal <- white[trainIndex==2, !(names(white) %in% c('quality','q'))]
+wTest <- white[trainIndex==3, !(names(white) %in% c('quality','q'))]
+```
+
+
+
+## METHOD 1:  Manual Tuning
+#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
+
+
+```{r}
+library(xgboost)
+library(dplyr)
+
+# create DMatrix objects for sgboost to consume
+dtrain <- xgb.DMatrix(data=as.matrix(select(wTrain, -class)), 
+                      label=sapply(wTrain$class, function(x) ifelse(x=='good', 1, 0)))
+dvalidation <- xgb.DMatrix(data=as.matrix(select(wVal, -class)), 
+                      label=sapply(wVal$class, function(x) ifelse(x=='good', 1, 0) ))
+
+# set learning rate (eta) to .1 and remaining parameters to reasonable defaults
+params = list(eta = .1,
+              max_depth = 5,
+              gamma = 0, 
+              colsample_bytree = .8, 
+              min_child_weight = 1, 
+              subsample = .5,
+              objective = 'binary:logistic',
+              eval_metric = 'auc',
+              nthread = 4)
+
+# train model using auc on validation data as early stopping metric
+xgb_m1 <- xgb.train(params = params,
+                 data = dtrain,
+                 nrounds = 1000,
+                 print_every_n = 10L,
+                 early_stopping_rounds = 50,
+                 maximize = TRUE,
+                 watchlist = list(val1 = dvalidation))
+```
+
+
+
+
+## METHOD 2:  Grid Search - Caret CV
+#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
+
+## METHOD 3:  Random Search - Caret CV
+#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
+
+## METHOD 4:  Adaptive Resammpling
+#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
+
+## METHOD 5:  Bayesian Optimization
+#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
+
+
+
+## Performance Evalution on Test Data

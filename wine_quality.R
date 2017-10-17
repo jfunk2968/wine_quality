@@ -3,9 +3,10 @@
 
 white <- read.csv('~/Desktop/wine_quality/winequality-white.csv', sep=";")
 print(str(white))
-white$q <- as.factor(white$quality)
+
 
 library(ggplot2)
+white$q <- as.factor(white$quality)
 ggplot(data=white, aes(x=q)) +
   geom_bar() +
   labs(x = "Wine Quality")
@@ -143,8 +144,21 @@ library(mgcv)
 
 xknots = list(quantile(pdp2$density, seq(.05, .95, .05)))
 
-pen_spline <- gam(pdp2$yhat ~ s(pdp2$density, bs="cr", k=19), 
-                  knots=xknots)
+pen_spline <- gam(pdp2$yhat ~ s(pdp2$density, bs="cs", m=c(3,5)), 
+                  knots=list(density=c(lmin+.001, lmax-.001)))
+
+pen_spline <- gam(pdp2$yhat ~ s(pdp2$density, bs="cs", m=c(3,5)), 
+                  knots=list(density=c(lmin+.001, lmax-.001)))
+
+
+pdp2$pen <- pen_spline$fitted.values
+
+ggplot(pdp2, aes(x=density)) + 
+  geom_line(aes(y=yhat), color='red') +
+  #geom_line(aes(y=sp1), color='blue') +
+  #geom_line(aes(y=mars), color='green') +
+  geom_line(aes(y=pen), color='purple')
+
 
 
 # Plot all PDP parts together
@@ -162,6 +176,7 @@ pdp_plot <- ggplot(pdp2, aes(x=density)) +
   geom_line(aes(y=yhat), color='red') +
   geom_line(aes(y=sp1), color='blue') +
   geom_line(aes(y=mars), color='green') +
+  geom_line(aes(y=pen), color='purple') +
   xlim(lmin, lmax)
 
 plot_grid(pdp_plot, 
