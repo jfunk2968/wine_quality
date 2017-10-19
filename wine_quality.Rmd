@@ -13,11 +13,13 @@ knitr::opts_chunk$set(echo = TRUE)
 # load wine quality data
 white <- read.csv('~/Desktop/wine_quality/winequality-white.csv', sep=";")
 print(str(white))
+```
 
+```{r}
 # plot the target (quality) distribution
 library(ggplot2)
 white$q <- as.factor(white$quality)
-white$class <- as.factor(ifelse(white$quality > 7, 'good', 'bad'))
+white$class <- as.factor(ifelse(white$quality >= 7, 'good', 'bad'))
 ggplot(data=white, aes(x=q)) +
   geom_bar() +
   labs(x = "Wine Quality")
@@ -40,7 +42,6 @@ wTest <- white[trainIndex==3, !(names(white) %in% c('quality','q'))]
 ## METHOD 1:  Manual Tuning
 #### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
 
-
 ```{r}
 library(xgboost)
 library(dplyr)
@@ -50,6 +51,8 @@ dtrain <- xgb.DMatrix(data=as.matrix(select(wTrain, -class)),
                       label=sapply(wTrain$class, function(x) ifelse(x=='good', 1, 0)))
 dvalidation <- xgb.DMatrix(data=as.matrix(select(wVal, -class)), 
                       label=sapply(wVal$class, function(x) ifelse(x=='good', 1, 0) ))
+dtest <- xgb.DMatrix(data=as.matrix(select(wTest, -class)), 
+                      label=sapply(wTest$class, function(x) ifelse(x=='good', 1, 0) ))
 
 # set learning rate (eta) to .1 and remaining parameters to reasonable defaults
 params = list(eta = .1,
@@ -70,16 +73,45 @@ xgb_m1 <- xgb.train(params = params,
                  early_stopping_rounds = 50,
                  maximize = TRUE,
                  watchlist = list(val1 = dvalidation))
+
+pred1 <- predict(xgb_m1, dtest)
 ```
 
 
-
-
 ## METHOD 2:  Grid Search - Caret CV
-#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
+#### Fit an initial xgboost model using Caret's grid search functionality.
 
-## METHOD 3:  Random Search - Caret CV
-#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
+
+
+
+## METHOD 3:  Random Search - Caret
+#### Fit an initial xgboost model using Caret's random search functionality
+
+```{r}
+# Run a random parameter search
+df3 <- rbind(wTrain, wVal)
+
+fitControlR <- trainControl(summaryFunction = twoClassSummary,
+                            method = 'cv',
+                            number = 3,
+                            classProbs = T,
+                            search = "random")
+
+gbmFitR <- train(class ~ .,
+                 data = df3,
+                 method = 'xgbTree',
+                 metric = 'ROC',
+                 trControl = fitControlR,
+                 tuneLength = 5,
+                 verbose = 1,
+                 nthread = 4)
+
+gbmFitR
+
+predR <- as.numeric(predict(gbmFitR, wTest, type="prob")[,'good'])
+```
+
+
 
 ## METHOD 4:  Adaptive Resammpling
 #### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
@@ -90,3 +122,43 @@ xgb_m1 <- xgb.train(params = params,
 
 
 ## Performance Evalution on Test Data
+```{r}
+library(ROCR)
+preds <- cbind(pred1, predR)
+
+preds.mat <- prediction(preds, matrix(wTest$class, nrow=length(wTest$class), ncol=2))
+
+prf <- performance(preds.mat, measure = "tpr", x.measure = "fpr")
+plot(prf, col=as.list(c('red','blue')))
+
+#auc1 <- performance(pr1, measure = "auc")
+#gini1 <- 2*(auc1@y.values[[1]]-.5)
+
+# 
+# prR <- prediction(predR, wTest$class)
+# prfR <- performance(prR, measure = "tpr", x.measure = "fpr")
+# plot(prfR, col="blue")
+# 
+# #aucR <- performance(prR, measure = "auc")
+#giniR <- 2*(aucR@y.values[[1]]-.5)
+```
+
+
+
+
+
+<!-- # 45 degree line for ROC plots -->
+<!-- pred_45 <- seq(0,1,.00001) -->
+<!-- label_45 <- append(rep(c(0,1),50000),0) -->
+<!-- pr <- prediction(pred_45, label_45) -->
+<!-- prf <- performance(pr, measure = "tpr", x.measure = "fpr") -->
+<!-- plot(prf, col='green', add=TRUE) -->
+<!-- prf45.df <- data.frame(prf@x.values[[1]],prf@y.values[[1]]) -->
+<!-- colnames(prf45.df) <- c('x','y') -->
+
+<!-- ggplot() +  -->
+<!--   geom_line(data=big_data, aes(x, y, color=fold), size=1) + -->
+<!--   geom_line(data=prf45.df, aes(x=x, y=y), color='black') + -->
+<!--   labs(title="Annual Data Cross Validation ROC", -->
+<!--        x='Actual Cum. Bad Percentage', -->
+<!--        y='Actual Cum. Good Percentage') -->
