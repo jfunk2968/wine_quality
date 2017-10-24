@@ -102,7 +102,7 @@ gbmFitR <- train(class ~ .,
                  method = 'xgbTree',
                  metric = 'ROC',
                  trControl = fitControlR,
-                 tuneLength = 5,
+                 tuneLength = ,
                  verbose = 1,
                  nthread = 4)
 
@@ -120,45 +120,28 @@ predR <- as.numeric(predict(gbmFitR, wTest, type="prob")[,'good'])
 #### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
 
 
+```{r}
+library(ROCR)
+get_roc <- function(pred, outcome) {
+  p1 <- prediction(pred, outcome)
+  p2 <- performance(p1, measure = "tpr", x.measure = "fpr")
+  roc_out <- data.frame(x=p2@x.values[[1]], y=p2@y.values[[1]])
+  roc_out
+}
+```
 
 ## Performance Evalution on Test Data
 ```{r}
-library(ROCR)
-preds <- cbind(pred1, predR)
+roc_pred1 <- get_roc(pred1, wTest$class)
+roc_predR <- get_roc(predR, wTest$class)
+l_45 <- data.frame(x=c(0,1), y=c(0,1))
 
-preds.mat <- prediction(preds, matrix(wTest$class, nrow=length(wTest$class), ncol=2))
-
-prf <- performance(preds.mat, measure = "tpr", x.measure = "fpr")
-plot(prf, col=as.list(c('red','blue')))
-
-#auc1 <- performance(pr1, measure = "auc")
-#gini1 <- 2*(auc1@y.values[[1]]-.5)
-
-# 
-# prR <- prediction(predR, wTest$class)
-# prfR <- performance(prR, measure = "tpr", x.measure = "fpr")
-# plot(prfR, col="blue")
-# 
-# #aucR <- performance(prR, measure = "auc")
-#giniR <- 2*(aucR@y.values[[1]]-.5)
+ggplot() +
+  geom_line(data=l_45, aes(x, y), color='black', size=1) +
+  geom_line(data=roc_pred1, aes(x, y), color='blue', size=1) +
+  geom_line(data=roc_predR, aes(x, y), color='red', size=1) +
+  labs(title="Comparison of XGBOOST Models on Test Data",
+     x='False Positive Rate',
+     y='True Positive Rate')
 ```
 
-
-
-
-
-<!-- # 45 degree line for ROC plots -->
-<!-- pred_45 <- seq(0,1,.00001) -->
-<!-- label_45 <- append(rep(c(0,1),50000),0) -->
-<!-- pr <- prediction(pred_45, label_45) -->
-<!-- prf <- performance(pr, measure = "tpr", x.measure = "fpr") -->
-<!-- plot(prf, col='green', add=TRUE) -->
-<!-- prf45.df <- data.frame(prf@x.values[[1]],prf@y.values[[1]]) -->
-<!-- colnames(prf45.df) <- c('x','y') -->
-
-<!-- ggplot() +  -->
-<!--   geom_line(data=big_data, aes(x, y, color=fold), size=1) + -->
-<!--   geom_line(data=prf45.df, aes(x=x, y=y), color='black') + -->
-<!--   labs(title="Annual Data Cross Validation ROC", -->
-<!--        x='Actual Cum. Bad Percentage', -->
-<!--        y='Actual Cum. Good Percentage') -->
