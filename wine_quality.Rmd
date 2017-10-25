@@ -5,6 +5,14 @@ output: html_notebook
 
 ```{r setup, include=FALSE, echo=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(caret)
+library(xgboost)
+library(plyr)
+library(dplyr)
+library(rBayesianOptimization)
+library(ROCR)
+
 ```
 
 ## A brief comparison of xgboost parameter tuning methods using the Wine Quality data set
@@ -17,7 +25,6 @@ print(str(white))
 
 ```{r}
 # plot the target (quality) distribution
-library(ggplot2)
 white$q <- as.factor(white$quality)
 white$class <- as.factor(ifelse(white$quality >= 7, 'good', 'bad'))
 ggplot(data=white, aes(x=q)) +
@@ -27,33 +34,29 @@ ggplot(data=white, aes(x=q)) +
 
 ```{r}
 # partition data into Train, Validation, and Test splits
-library(caret)
 set.seed(507483)
 
-trainIndex <- createFolds(white$quality, k=3, list=F)
+trainIndex <- createFolds(white$quality, k=2, list=F)
 
 wTrain <- white[trainIndex==1, !(names(white) %in% c('quality','q'))]
-wVal <- white[trainIndex==2, !(names(white) %in% c('quality','q'))]
-wTest <- white[trainIndex==3, !(names(white) %in% c('quality','q'))]
+#wVal <- white[trainIndex==2, !(names(white) %in% c('quality','q'))]
+wTest <- white[trainIndex==2, !(names(white) %in% c('quality','q'))]
+```
+
+```{r}
+# create DMatrix objects for xgboost to consume
+dtrain <- xgb.DMatrix(data=as.matrix(select(wTrain, -class)), 
+                      label=sapply(wTrain$class, function(x) ifelse(x=='good', 1, 0)))
+dtest <- xgb.DMatrix(data=as.matrix(select(wTest, -class)), 
+                      label=sapply(wTest$class, function(x) ifelse(x=='good', 1, 0) ))
 ```
 
 
 
+
 ## METHOD 1:  Manual Tuning
-#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
-
+#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that 'high' rate using early stopping.
 ```{r}
-library(xgboost)
-library(dplyr)
-
-# create DMatrix objects for sgboost to consume
-dtrain <- xgb.DMatrix(data=as.matrix(select(wTrain, -class)), 
-                      label=sapply(wTrain$class, function(x) ifelse(x=='good', 1, 0)))
-dvalidation <- xgb.DMatrix(data=as.matrix(select(wVal, -class)), 
-                      label=sapply(wVal$class, function(x) ifelse(x=='good', 1, 0) ))
-dtest <- xgb.DMatrix(data=as.matrix(select(wTest, -class)), 
-                      label=sapply(wTest$class, function(x) ifelse(x=='good', 1, 0) ))
-
 # set learning rate (eta) to .1 and remaining parameters to reasonable defaults
 params = list(eta = .1,
               max_depth = 5,
@@ -66,16 +69,193 @@ params = list(eta = .1,
               nthread = 4)
 
 # train model using auc on validation data as early stopping metric
-xgb_m1 <- xgb.train(params = params,
+xgb_m1_cv1 <- xgb.cv(params = params,
                  data = dtrain,
                  nrounds = 1000,
+                 nfold = 3,
                  print_every_n = 10L,
-                 early_stopping_rounds = 50,
-                 maximize = TRUE,
-                 watchlist = list(val1 = dvalidation))
+                 early_stopping_rounds = 40,
+                 maximize = TRUE)
 
-pred1 <- predict(xgb_m1, dtest)
+best_cv1_iter <- xgb_m1_cv1$best_iteration
 ```
+
+#### Next tune max_depth
+```{r}
+
+for(depth in c(7,8,9,10,11,12))  {
+  params = list(eta = .1,
+                max_depth = depth,
+                gamma = 0, 
+                colsample_bytree = .8, 
+                min_child_weight = 1, 
+                subsample = .5,
+                objective = 'binary:logistic',
+                eval_metric = 'auc',
+                nthread = 4)
+  
+  # train model using auc on validation data as early stopping metric
+  cv <- xgb.cv(params = params,
+               data = dtrain,
+               nrounds = best_cv1_iter,
+               nfold = 3,
+               verbose = 0)
+  
+  print(paste(as.character(depth), " : ", as.character(max(cv$evaluation_log$test_auc_mean)), sep=""))
+}
+```
+
+Best max_depth is 11
+
+#### Next tune subsample
+```{r}
+
+for(sample in c(.6,.7,.8,.9))  {
+  params = list(eta = .1,
+                max_depth = 11,
+                gamma = 0, 
+                colsample_bytree = .8, 
+                min_child_weight = 1, 
+                subsample = sample,
+                objective = 'binary:logistic',
+                eval_metric = 'auc',
+                nthread = 4)
+  
+  # train model using auc on validation data as early stopping metric
+  cv <- xgb.cv(params = params,
+               data = dtrain,
+               nrounds = best_cv1_iter,
+               nfold = 3,
+               verbose = 0)
+  
+  print(paste(as.character(sample), " : ", as.character(max(cv$evaluation_log$test_auc_mean)), sep=""))
+}
+```
+
+Best subsample is .8
+
+#### Next tune colsample_bytree
+```{r}
+
+for(colsample in c(.85,.9,.95,1))  {
+  params = list(eta = .1,
+                max_depth = 11,
+                gamma = 0, 
+                colsample_bytree = colsample, 
+                min_child_weight = 1, 
+                subsample = .8,
+                objective = 'binary:logistic',
+                eval_metric = 'auc',
+                nthread = 4)
+  
+  # train model using auc on validation data as early stopping metric
+  cv <- xgb.cv(params = params,
+               data = dtrain,
+               nrounds = best_cv1_iter,
+               nfold = 3,
+               verbose = 0)
+  
+  print(paste(as.character(colsample), " : ", as.character(max(cv$evaluation_log$test_auc_mean)), sep=""))
+}
+```
+
+Best column sample rate is .9
+
+#### Next check if train error is larger than test error, suggesting regulariztion may help
+```{r}
+params = list(eta = .1,
+              max_depth = 11,
+              gamma = 0, 
+              colsample_bytree = .9, 
+              min_child_weight = 1, 
+              subsample = .8,
+              objective = 'binary:logistic',
+              eval_metric = 'auc',
+              nthread = 4)
+  
+cv <- xgb.cv(params = params,
+             data = dtrain,
+             nrounds = best_cv1_iter,
+             nfold = 3,
+             print_every_n = 5)
+```
+
+
+#### See if regularization via gamma can help increase test AUC
+```{r}
+
+for(gam in c(0, 3, 6, 10))  {
+  params = list(eta = .1,
+                max_depth = 11,
+                gamma = gam, 
+                colsample_bytree = .9, 
+                min_child_weight = 1, 
+                subsample = .8,
+                objective = 'binary:logistic',
+                eval_metric = 'auc',
+                nthread = 4)
+  
+  # train model using auc on validation data as early stopping metric
+  cv <- xgb.cv(params = params,
+               data = dtrain,
+               nrounds = best_cv1_iter,
+               nfold = 3,
+               verbose = 0)
+  
+  print(paste(as.character(gam), " : ", as.character(max(cv$evaluation_log$test_auc_mean)), sep=""))
+}
+```
+
+No improvement, so let's leave gamma at 0
+
+#### Now fit a final model using the parameters derived above, dropping the learning rate, and building more trees
+```{r}
+# set learning rate (eta) to .1 and remaining parameters to reasonable defaults
+params = list(eta = .001,
+              max_depth = 11,
+              gamma = 0, 
+              colsample_bytree = .9, 
+              min_child_weight = 1, 
+              subsample = .8,
+              objective = 'binary:logistic',
+              eval_metric = 'auc',
+              nthread = 4)
+
+# train model using auc on validation data as early stopping metric
+xgb_m1_cvF <- xgb.cv(params = params,
+                 data = dtrain,
+                 nrounds = 6000,
+                 nfold = 3,
+                 print_every_n = 100L,
+                 early_stopping_rounds = 100,
+                 maximize = TRUE)
+
+best_cvF_iter <- xgb_m1_cvF$best_iteration
+```
+#### Now fit a final model using the parameters derived above, dropping the learning rate, and building more trees
+```{r}
+# set learning rate (eta) to .1 and remaining parameters to reasonable defaults
+params = list(eta = .001,
+              max_depth = 11,
+              gamma = 0, 
+              colsample_bytree = .9, 
+              min_child_weight = 1, 
+              subsample = .8,
+              objective = 'binary:logistic',
+              eval_metric = 'auc',
+              nthread = 4)
+
+# train model using auc on validation data as early stopping metric
+xgb_m1_cvF <- xgb.train(params = params,
+                 data = dtrain,
+                 nrounds = best_cvF_iter,
+                 print_every_n = 100L)
+```
+```{r}
+pred1 <- predict(xgb_m1_cvF, dtest)
+```
+
+
 
 
 ## METHOD 2:  Grid Search - Caret CV
@@ -84,13 +264,39 @@ pred1 <- predict(xgb_m1, dtest)
 
 
 
-## METHOD 3:  Random Search - Caret
-#### Fit an initial xgboost model using Caret's random search functionality
+## METHOD 3:  Random Search
+#### Fit an xgboost model using random search
+
+
+```{r}
+for(i in seq(3)){
+  etaR <- round(runif(1, min=.0001, max=.3), 5)
+  nroundsR <- round(runif(1, min=100, max=2000))
+  max_depthR <- round(runif(1, min=1, max=20))
+  colsample_bytreeR <- round(runif(1, min=.2, max=1), 5)
+  min_child_weightR <- round(runif(1, min=1, max=20))
+  subsamplehR <- round(runif(1, min=.2, max=1), 5)
+  
+  print("------------------------------------------")
+  print(paste("eta                :", etaR, sep=" "))
+  print(paste("nrounds            :", nroundsR, sep=" "))
+  print(paste("max_depth          :", max_depthR, sep=" "))
+  print(paste("colsample_bytree   :", colsample_bytreeR, sep=" "))
+  print(paste("min_child_weight   :", min_child_weightR, sep=" "))
+  print(paste("subsample          :", subsamplehR, sep=" "))
+}
+```
+
+
+
+
+
+
+
+
 
 ```{r}
 # Run a random parameter search
-df3 <- rbind(wTrain, wVal)
-
 fitControlR <- trainControl(summaryFunction = twoClassSummary,
                             method = 'cv',
                             number = 3,
@@ -98,11 +304,11 @@ fitControlR <- trainControl(summaryFunction = twoClassSummary,
                             search = "random")
 
 gbmFitR <- train(class ~ .,
-                 data = df3,
+                 data = wTrain,
                  method = 'xgbTree',
                  metric = 'ROC',
                  trControl = fitControlR,
-                 tuneLength = ,
+                 tuneLength = 30,
                  verbose = 1,
                  nthread = 4)
 
@@ -119,9 +325,127 @@ predR <- as.numeric(predict(gbmFitR, wTest, type="prob")[,'good'])
 ## METHOD 5:  Bayesian Optimization
 #### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
 
+```{r}
+# Use bayesian optimization to tune parameters, with random search as starting point
+bayesControl <- trainControl(method = "repeatedcv",
+                     number = 3,
+                     repeats = 3,
+                     summaryFunction = twoClassSummary,
+                     classProbs = T )
+
+xgb_fit_bayes <- function(nroundsIn, etaIn, max_depthIn, gammaIn, colsample_bytreeIn, min_child_weightIn, subsampleIn) {
+  txt <- capture.output(
+    mod <- train(class ~ .,
+                 data = wTrain,
+                 method = 'xgbTree',
+                 metric = 'ROC',
+                 trControl = bayesControl,
+                 tuneGrid = data.frame(nrounds = nroundsIn, 
+                                       eta = etaIn, 
+                                       max_depth = max_depthIn, 
+                                       gamma = gammaIn, 
+                                       colsample_bytree = colsample_bytreeIn, 
+                                       min_child_weight = min_child_weightIn, 
+                                       subsample = subsampleIn),
+                 nthread=4))
+  
+  list(Score = getTrainPerf(mod)[, "TrainROC"], Pred = 0)
+}
+```
 
 ```{r}
-library(ROCR)
+bounds <- list(nroundsIn = c(50L, 2000L), 
+               etaIn = c(.0001, .2), 
+               max_depthIn = c(1L, 15L), 
+               gammaIn = c(1, 10),
+               colsample_bytreeIn = c(.5, 1), 
+               min_child_weightIn = c(1L, 20L),
+               subsampleIn = c(.2, 1))
+
+## Create a grid of values as the input into the BO code
+initial_grid <- gbmFitR$results[, c("nrounds", 
+                                    "eta", 
+                                    "max_depth", 
+                                    "gamma", 
+                                    "colsample_bytree", 
+                                    "min_child_weight", 
+                                    "subsample", 
+                                    "ROC")]
+
+names(initial_grid) <- c("nroundsIn", 
+                         "etaIn", 
+                         "max_depthIn", 
+                         "gammaIn", 
+                         "colsample_bytreeIn", 
+                         "min_child_weightIn", 
+                         "subsampleIn", 
+                         "Value")
+
+initial_grid
+```
+
+```{r}
+set.seed(8606)
+ba_search <- BayesianOptimization(xgb_fit_bayes,
+                                  bounds = bounds,
+                                  init_grid_dt = initial_grid, 
+                                  init_points = 0, 
+                                  n_iter = 10,
+                                  acq = "ucb", 
+                                  kappa = 1, 
+                                  eps = 0.0,
+                                  verbose = TRUE)
+```
+
+
+```{r}
+# use BO best params to fit a model
+BO_params = list(eta = ba_search$Best_Par['etaIn'],
+                  max_depth = ba_search$Best_Par['max_depthIn'],
+                  gamma = ba_search$Best_Par['gammaIn'], 
+                  colsample_bytree = ba_search$Best_Par['colsample_bytreeIn'], 
+                  min_child_weight = ba_search$Best_Par['min_child_weightIn'], 
+                  subsample = ba_search$Best_Par['subsampleIn'],
+                  objective = 'binary:logistic',
+                  eval_metric = 'auc',
+                  nthread = 4)
+
+xgb_BO <- xgb.train(params = params,
+                 data = dtrain,
+                 nrounds = ba_search$Best_Par['nroundsIn'],
+                 print_every_n = 10L)
+
+predBO <- predict(xgb_mBO, dtest)
+```
+
+
+
+
+```{r}
+new_grid <- ba_search$History[,-c('Round')]
+new_grid
+
+ba_search2 <- BayesianOptimization(xgb_fit_bayes,
+                                  bounds = bounds,
+                                  init_grid_dt = new_grid, 
+                                  init_points = 0, 
+                                  n_iter = 20,
+                                  acq = "ucb", 
+                                  kappa = 1, 
+                                  eps = 0.0,
+                                  verbose = TRUE)
+```
+
+
+
+
+
+
+
+
+
+
+```{r, echo=FALSE, inclue=FALSE}
 get_roc <- function(pred, outcome) {
   p1 <- prediction(pred, outcome)
   p2 <- performance(p1, measure = "tpr", x.measure = "fpr")
@@ -134,12 +458,16 @@ get_roc <- function(pred, outcome) {
 ```{r}
 roc_pred1 <- get_roc(pred1, wTest$class)
 roc_predR <- get_roc(predR, wTest$class)
+roc_predR2 <- get_roc(predR2, wTest$class)
+
 l_45 <- data.frame(x=c(0,1), y=c(0,1))
 
 ggplot() +
   geom_line(data=l_45, aes(x, y), color='black', size=1) +
   geom_line(data=roc_pred1, aes(x, y), color='blue', size=1) +
   geom_line(data=roc_predR, aes(x, y), color='red', size=1) +
+    geom_line(data=roc_predR2, aes(x, y), color='green', size=1) +
+
   labs(title="Comparison of XGBOOST Models on Test Data",
      x='False Positive Rate',
      y='True Positive Rate')
