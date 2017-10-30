@@ -21,6 +21,7 @@ library(ROCR)
 # load wine quality data
 white <- read.csv('~/Desktop/wine_quality/winequality-white.csv', sep=";")
 print(str(white))
+print(sum(is.na(white)))
 ```
 
 ```{r}
@@ -58,7 +59,7 @@ dtest <- xgb.DMatrix(data=as.matrix(select(wTest, -class)),
 #### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that 'high' rate using early stopping.
 ```{r}
 # set learning rate (eta) to .1 and remaining parameters to reasonable defaults
-params = list(eta = .1,
+params = list(eta = .05,
               max_depth = 5,
               gamma = 0, 
               colsample_bytree = .8, 
@@ -68,107 +69,136 @@ params = list(eta = .1,
               eval_metric = 'auc',
               nthread = 4)
 
-# train model using auc on validation data as early stopping metric
-xgb_m1_cv1 <- xgb.cv(params = params,
-                 data = dtrain,
-                 nrounds = 1000,
-                 nfold = 3,
-                 print_every_n = 10L,
-                 early_stopping_rounds = 40,
-                 maximize = TRUE)
 
-best_cv1_iter <- xgb_m1_cv1$best_iteration
+# function to run repeated cv
+repeated.cv <- function(i)  {
+  # train model using auc on validation data as early stopping metric
+  xgb_m1_cv1 <- xgb.cv(params = params,
+                   data = dtrain,
+                   nrounds = 1000,
+                   nfold = 3,
+                   verbose = 0,
+                   #print_every_n = 10L,
+                   early_stopping_rounds = 40,
+                   maximize = TRUE)
+  return(xgb_m1_cv1$best_iteration)
+}
+
+result <- sapply(seq(5), repeated.cv)
+print(result)
+
+best_cv1_iter <- round(mean(result))
+print(best_cv1_iter)
 ```
 
 #### Next tune max_depth
 ```{r}
 
-for(depth in c(7,8,9,10,11,12))  {
-  params = list(eta = .1,
-                max_depth = depth,
-                gamma = 0, 
-                colsample_bytree = .8, 
-                min_child_weight = 1, 
-                subsample = .5,
-                objective = 'binary:logistic',
-                eval_metric = 'auc',
-                nthread = 4)
+for(depth in c(7, 8, 9, 10, 11, 12))  {
   
-  # train model using auc on validation data as early stopping metric
-  cv <- xgb.cv(params = params,
-               data = dtrain,
-               nrounds = best_cv1_iter,
-               nfold = 3,
-               verbose = 0)
+  repeated.cv.depth <- function(i)  {
+    params = list(eta = .05,
+                  max_depth = depth,
+                  gamma = 0, 
+                  colsample_bytree = .8, 
+                  min_child_weight = 1, 
+                  subsample = .5,
+                  objective = 'binary:logistic',
+                  eval_metric = 'auc',
+                  nthread = 4)
+    
+    # train model using auc on validation data as early stopping metric
+    cv <- xgb.cv(params = params,
+                 data = dtrain,
+                 nrounds = best_cv1_iter,
+                 nfold = 3,
+                 verbose = 0)
+    
+    return(max(cv$evaluation_log$test_auc_mean))
+    }
   
-  print(paste(as.character(depth), " : ", as.character(max(cv$evaluation_log$test_auc_mean)), sep=""))
+  result <- sapply(seq(5), repeated.cv.depth)
+  #print(result)
+  print(paste(as.character(depth), " : ", as.character(round(mean(result), 4)), sep=""))
 }
 ```
 
-Best max_depth is 11
+Best max_depth is 10
 
 #### Next tune subsample
 ```{r}
 
 for(sample in c(.6,.7,.8,.9))  {
-  params = list(eta = .1,
-                max_depth = 11,
-                gamma = 0, 
-                colsample_bytree = .8, 
-                min_child_weight = 1, 
-                subsample = sample,
-                objective = 'binary:logistic',
-                eval_metric = 'auc',
-                nthread = 4)
   
-  # train model using auc on validation data as early stopping metric
-  cv <- xgb.cv(params = params,
-               data = dtrain,
-               nrounds = best_cv1_iter,
-               nfold = 3,
-               verbose = 0)
+  repeated.cv.samp <- function(i) {
+    params = list(eta = .05,
+                  max_depth = 10,
+                  gamma = 0, 
+                  colsample_bytree = .8, 
+                  min_child_weight = 1, 
+                  subsample = sample,
+                  objective = 'binary:logistic',
+                  eval_metric = 'auc',
+                  nthread = 4)
+    
+      # train model using auc on validation data as early stopping metric
+      cv <- xgb.cv(params = params,
+                   data = dtrain,
+                   nrounds = best_cv1_iter,
+                   nfold = 3,
+                   verbose = 0)
+      return(max(cv$evaluation_log$test_auc_mean))
+  }
   
-  print(paste(as.character(sample), " : ", as.character(max(cv$evaluation_log$test_auc_mean)), sep=""))
+  result <- sapply(seq(5), repeated.cv.samp)
+  #print(result)
+  print(paste(as.character(sample), " : ", as.character(round(mean(result), 4)), sep=""))
 }
 ```
 
-Best subsample is .8
+Best subsample is .7
 
 #### Next tune colsample_bytree
 ```{r}
 
 for(colsample in c(.85,.9,.95,1))  {
-  params = list(eta = .1,
-                max_depth = 11,
-                gamma = 0, 
-                colsample_bytree = colsample, 
-                min_child_weight = 1, 
-                subsample = .8,
-                objective = 'binary:logistic',
-                eval_metric = 'auc',
-                nthread = 4)
+  repeated.cv.colsamp <- function(i) {
+    params = list(eta = .05,
+                  max_depth = 10,
+                  gamma = 0, 
+                  colsample_bytree = colsample, 
+                  min_child_weight = 1, 
+                  subsample = .7,
+                  objective = 'binary:logistic',
+                  eval_metric = 'auc',
+                  nthread = 4)
+    
+    # train model using auc on validation data as early stopping metric
+    cv <- xgb.cv(params = params,
+                 data = dtrain,
+                 nrounds = best_cv1_iter,
+                 nfold = 3,
+                 verbose = 0)
+    
+    return(max(cv$evaluation_log$test_auc_mean))
+  }
   
-  # train model using auc on validation data as early stopping metric
-  cv <- xgb.cv(params = params,
-               data = dtrain,
-               nrounds = best_cv1_iter,
-               nfold = 3,
-               verbose = 0)
-  
-  print(paste(as.character(colsample), " : ", as.character(max(cv$evaluation_log$test_auc_mean)), sep=""))
+  result <- sapply(seq(5), repeated.cv.colsamp)
+  #print(result)
+  print(paste(as.character(colsample), " : ", as.character(round(mean(result), 4)), sep=""))
 }
 ```
 
-Best column sample rate is .9
+Best column sample rate is 1.0
 
 #### Next check if train error is larger than test error, suggesting regulariztion may help
 ```{r}
-params = list(eta = .1,
-              max_depth = 11,
+params = list(eta = .05,
+              max_depth = 10,
               gamma = 0, 
-              colsample_bytree = .9, 
+              colsample_bytree = 1, 
               min_child_weight = 1, 
-              subsample = .8,
+              subsample = .7,
               objective = 'binary:logistic',
               eval_metric = 'auc',
               nthread = 4)
@@ -177,7 +207,7 @@ cv <- xgb.cv(params = params,
              data = dtrain,
              nrounds = best_cv1_iter,
              nfold = 3,
-             print_every_n = 5)
+             print_every_n = 10)
 ```
 
 
@@ -185,24 +215,29 @@ cv <- xgb.cv(params = params,
 ```{r}
 
 for(gam in c(0, 3, 6, 10))  {
-  params = list(eta = .1,
-                max_depth = 11,
-                gamma = gam, 
-                colsample_bytree = .9, 
-                min_child_weight = 1, 
-                subsample = .8,
-                objective = 'binary:logistic',
-                eval_metric = 'auc',
-                nthread = 4)
+  repeated.cv.gamma <- function(i) {  
+    params = list(eta = .05,
+                  max_depth = 10,
+                  gamma = gam, 
+                  colsample_bytree = 1, 
+                  min_child_weight = 1, 
+                  subsample = .7,
+                  objective = 'binary:logistic',
+                  eval_metric = 'auc',
+                  nthread = 4)
+    
+    # train model using auc on validation data as early stopping metric
+    cv <- xgb.cv(params = params,
+                 data = dtrain,
+                 nrounds = best_cv1_iter,
+                 nfold = 3,
+                 verbose = 0)
+    
+    return(max(cv$evaluation_log$test_auc_mean))
+  }
   
-  # train model using auc on validation data as early stopping metric
-  cv <- xgb.cv(params = params,
-               data = dtrain,
-               nrounds = best_cv1_iter,
-               nfold = 3,
-               verbose = 0)
-  
-  print(paste(as.character(gam), " : ", as.character(max(cv$evaluation_log$test_auc_mean)), sep=""))
+  result <- sapply(seq(5), repeated.cv.gamma)
+  print(paste(as.character(gam), " : ", as.character(round(mean(result), 4)), sep=""))
 }
 ```
 
@@ -212,11 +247,11 @@ No improvement, so let's leave gamma at 0
 ```{r}
 # set learning rate (eta) to .1 and remaining parameters to reasonable defaults
 params = list(eta = .001,
-              max_depth = 11,
+              max_depth = 10,
               gamma = 0, 
-              colsample_bytree = .9, 
+              colsample_bytree = 1, 
               min_child_weight = 1, 
-              subsample = .8,
+              subsample = .7,
               objective = 'binary:logistic',
               eval_metric = 'auc',
               nthread = 4)
@@ -236,11 +271,11 @@ best_cvF_iter <- xgb_m1_cvF$best_iteration
 ```{r}
 # set learning rate (eta) to .1 and remaining parameters to reasonable defaults
 params = list(eta = .001,
-              max_depth = 11,
+              max_depth = 10,
               gamma = 0, 
-              colsample_bytree = .9, 
+              colsample_bytree = 1, 
               min_child_weight = 1, 
-              subsample = .8,
+              subsample = .7,
               objective = 'binary:logistic',
               eval_metric = 'auc',
               nthread = 4)
@@ -250,8 +285,7 @@ xgb_m1_cvF <- xgb.train(params = params,
                  data = dtrain,
                  nrounds = best_cvF_iter,
                  print_every_n = 100L)
-```
-```{r}
+
 pred1 <- predict(xgb_m1_cvF, dtest)
 ```
 
