@@ -292,8 +292,8 @@ pred1 <- predict(xgb_m1_cvF, dtest)
 
 
 
-## METHOD 2:  Grid Search - Caret CV
-#### Fit an initial xgboost model using Caret's grid search functionality.
+## METHOD 2:  Grid Search
+#### 
 
 
 
@@ -301,54 +301,52 @@ pred1 <- predict(xgb_m1_cvF, dtest)
 ## METHOD 3:  Random Search
 #### Fit an xgboost model using random search
 
-
 ```{r}
-for(i in seq(3)){
+rand <- function(i)  {
   etaR <- round(runif(1, min=.0001, max=.3), 5)
-  nroundsR <- round(runif(1, min=100, max=2000))
   max_depthR <- round(runif(1, min=1, max=20))
   colsample_bytreeR <- round(runif(1, min=.2, max=1), 5)
   min_child_weightR <- round(runif(1, min=1, max=20))
-  subsamplehR <- round(runif(1, min=.2, max=1), 5)
+  subsampleR <- round(runif(1, min=.2, max=1), 5)
   
   print("------------------------------------------")
   print(paste("eta                :", etaR, sep=" "))
-  print(paste("nrounds            :", nroundsR, sep=" "))
   print(paste("max_depth          :", max_depthR, sep=" "))
   print(paste("colsample_bytree   :", colsample_bytreeR, sep=" "))
   print(paste("min_child_weight   :", min_child_weightR, sep=" "))
-  print(paste("subsample          :", subsamplehR, sep=" "))
+  print(paste("subsample          :", subsampleR, sep=" "))
+  print("")
+  
+  params = list(eta = etaR,
+                max_depth = max_depthR,
+                gamma = 0, 
+                colsample_bytree = colsample_bytreeR, 
+                min_child_weight = min_child_weightR, 
+                subsample = subsampleR,
+                objective = 'binary:logistic',
+                eval_metric = 'auc',
+                nthread = 4)
+    
+  repeated.cv.rand <- function(i) {
+    cv <- xgb.cv(params = params,
+                     data = dtrain,
+                     nrounds = 6000,
+                     nfold = 3,
+                     verbose = 0,
+                     #print_every_n = 10L,
+                     early_stopping_rounds = 50,
+                     maximize = TRUE)
+    return(max(cv$evaluation_log$test_auc_mean))
+  }
+  
+  results <- sapply(seq(3), repeated.cv.rand)
+  print(paste("Best AUC  : ", as.character(round(mean(results), 4)), sep=""))
+  return(c(etaR, max_depthR, colsample_bytreeR, min_child_weightR, subsampleR, mean(results)))
 }
-```
 
-
-
-
-
-
-
-
-
-```{r}
-# Run a random parameter search
-fitControlR <- trainControl(summaryFunction = twoClassSummary,
-                            method = 'cv',
-                            number = 3,
-                            classProbs = T,
-                            search = "random")
-
-gbmFitR <- train(class ~ .,
-                 data = wTrain,
-                 method = 'xgbTree',
-                 metric = 'ROC',
-                 trControl = fitControlR,
-                 tuneLength = 30,
-                 verbose = 1,
-                 nthread = 4)
-
-gbmFitR
-
-predR <- as.numeric(predict(gbmFitR, wTest, type="prob")[,'good'])
+rand.results <- as.data.frame(t(sapply(seq(10), rand)))
+colnames(rand.results) <- c('eta','depth','colsample','min_child','subsample','auc')     
+rand.results <- arrange(rand.results, desc(auc))
 ```
 
 
