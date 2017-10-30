@@ -1,1 +1,1 @@
-Explore machine learning algortihms on the wine quality data set with Caret
+## Explore a few different methods of tuning XGBoost hyperparameters in R, including manual, random search, Bayesian Optimization, and combintations
