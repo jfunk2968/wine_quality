@@ -354,60 +354,85 @@ rand.results <- arrange(rand.results, desc(auc))
 ## METHOD 4:  Adaptive Resammpling
 #### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
 
+
+
 ## METHOD 5:  Bayesian Optimization
-#### Fit an initial xgboost model using default parameters.  Fix the learning rate at .1 and find optimum number of trees for that rate using early stopping.
+#### 
 
 ```{r}
-# Use bayesian optimization to tune parameters, with random search as starting point
-bayesControl <- trainControl(method = "repeatedcv",
-                     number = 3,
-                     repeats = 3,
-                     summaryFunction = twoClassSummary,
-                     classProbs = T )
+# # Use bayesian optimization to tune parameters, with random search as starting point
+# bayesControl <- trainControl(method = "repeatedcv",
+#                      number = 3,
+#                      repeats = 3,
+#                      summaryFunction = twoClassSummary,
+#                      classProbs = T )
+# 
+# xgb_fit_bayes <- function(nroundsIn, etaIn, max_depthIn, gammaIn, colsample_bytreeIn, min_child_weightIn, subsampleIn) {
+#   txt <- capture.output(
+#     mod <- train(class ~ .,
+#                  data = wTrain,
+#                  method = 'xgbTree',
+#                  metric = 'ROC',
+#                  trControl = bayesControl,
+#                  tuneGrid = data.frame(nrounds = nroundsIn, 
+#                                        eta = etaIn, 
+#                                        max_depth = max_depthIn, 
+#                                        gamma = gammaIn, 
+#                                        colsample_bytree = colsample_bytreeIn, 
+#                                        min_child_weight = min_child_weightIn, 
+#                                        subsample = subsampleIn),
+#                  nthread=4))
+#   
+#  list(Score = getTrainPerf(mod)[, "TrainROC"], Pred = 0)
+#}
+```
 
-xgb_fit_bayes <- function(nroundsIn, etaIn, max_depthIn, gammaIn, colsample_bytreeIn, min_child_weightIn, subsampleIn) {
-  txt <- capture.output(
-    mod <- train(class ~ .,
-                 data = wTrain,
-                 method = 'xgbTree',
-                 metric = 'ROC',
-                 trControl = bayesControl,
-                 tuneGrid = data.frame(nrounds = nroundsIn, 
-                                       eta = etaIn, 
-                                       max_depth = max_depthIn, 
-                                       gamma = gammaIn, 
-                                       colsample_bytree = colsample_bytreeIn, 
-                                       min_child_weight = min_child_weightIn, 
-                                       subsample = subsampleIn),
-                 nthread=4))
+
+```{r}
+# set modeling functions
+
+repeated.cv.BO <- function(i) {
+  cv <- xgb.cv(params = params,
+                   data = dtrain,
+                   nrounds = 6000,
+                   nfold = 3,
+                   verbose = 0,
+                   #print_every_n = 10L,
+                   early_stopping_rounds = 50,
+                   maximize = TRUE)
+  return(max(cv$evaluation_log$test_auc_mean))
+}
+
+xgb_fit_bayes <- function(etaIn, max_depthIn, colsample_bytreeIn, min_child_weightIn, subsampleIn) {
   
-  list(Score = getTrainPerf(mod)[, "TrainROC"], Pred = 0)
+  params = list(eta = etaIn,
+                max_depth = max_depthIn,
+                gamma = 0, 
+                colsample_bytree = colsample_bytreeIn, 
+                min_child_weight = min_child_weightIn, 
+                subsample = subsampleIn,
+                objective = 'binary:logistic',
+                eval_metric = 'auc',
+                nthread = 4)
+  
+  results <- sapply(seq(3), repeated.cv.BO)
+  return(list(Score=mean(results), Pred=0))
 }
 ```
 
+
 ```{r}
-bounds <- list(nroundsIn = c(50L, 2000L), 
-               etaIn = c(.0001, .2), 
+bounds <- list(etaIn = c(.0001, .2), 
                max_depthIn = c(1L, 15L), 
-               gammaIn = c(1, 10),
                colsample_bytreeIn = c(.5, 1), 
                min_child_weightIn = c(1L, 20L),
                subsampleIn = c(.2, 1))
 
 ## Create a grid of values as the input into the BO code
-initial_grid <- gbmFitR$results[, c("nrounds", 
-                                    "eta", 
-                                    "max_depth", 
-                                    "gamma", 
-                                    "colsample_bytree", 
-                                    "min_child_weight", 
-                                    "subsample", 
-                                    "ROC")]
+initial_grid <- rand.results
 
-names(initial_grid) <- c("nroundsIn", 
-                         "etaIn", 
+names(initial_grid) <- c("etaIn", 
                          "max_depthIn", 
-                         "gammaIn", 
                          "colsample_bytreeIn", 
                          "min_child_weightIn", 
                          "subsampleIn", 
@@ -422,12 +447,31 @@ ba_search <- BayesianOptimization(xgb_fit_bayes,
                                   bounds = bounds,
                                   init_grid_dt = initial_grid, 
                                   init_points = 0, 
-                                  n_iter = 10,
+                                  n_iter = 3,
                                   acq = "ucb", 
                                   kappa = 1, 
                                   eps = 0.0,
                                   verbose = TRUE)
 ```
+
+
+
+```{r}
+new_grid <- ba_search$History[,-c('Round')]
+new_grid
+
+ba_search2 <- BayesianOptimization(xgb_fit_bayes,
+                                  bounds = bounds,
+                                  init_grid_dt = new_grid, 
+                                  init_points = 0, 
+                                  n_iter = 20,
+                                  acq = "ucb", 
+                                  kappa = 1, 
+                                  eps = 0.0,
+                                  verbose = TRUE)
+```
+
+
 
 
 ```{r}
@@ -451,22 +495,6 @@ predBO <- predict(xgb_mBO, dtest)
 ```
 
 
-
-
-```{r}
-new_grid <- ba_search$History[,-c('Round')]
-new_grid
-
-ba_search2 <- BayesianOptimization(xgb_fit_bayes,
-                                  bounds = bounds,
-                                  init_grid_dt = new_grid, 
-                                  init_points = 0, 
-                                  n_iter = 20,
-                                  acq = "ucb", 
-                                  kappa = 1, 
-                                  eps = 0.0,
-                                  verbose = TRUE)
-```
 
 
 
